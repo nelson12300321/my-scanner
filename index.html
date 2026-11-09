@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="均線掃描">
+<meta name="theme-color" content="#0e1116">
+<title>均線掃描器</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --line:#262d36; --text:#e6edf3; --muted:#8b949e;
+    --ma30:#f2c94c; --ma45:#2fb5f0; --ma60:#c77dff;
+    --up:#22c55e; --down:#ef4444;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC",sans-serif;overscroll-behavior:none}
+  body{display:flex;flex-direction:column;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  header{padding:10px 14px 6px}
+  .seg{display:flex;background:var(--panel);border-radius:10px;padding:3px}
+  .seg button{flex:1;border:0;background:transparent;color:var(--muted);font-size:15px;font-weight:600;
+    padding:8px 0;border-radius:8px}
+  .seg button.on{background:#2a313b;color:var(--text)}
+  .chips{display:flex;gap:6px;overflow-x:auto;padding:10px 14px 4px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:none;border:1px solid var(--line);background:transparent;color:var(--muted);
+    font-size:13px;padding:5px 11px;border-radius:999px}
+  .chip.on{border-color:var(--text);color:var(--text)}
+  .chip .n{opacity:.6;margin-left:3px}
+  #banner{display:none;margin:6px 14px 0;padding:7px 10px;border-radius:8px;background:#3a2a10;color:#f6c86b;font-size:12.5px}
+  main{flex:1;position:relative;overflow:hidden;touch-action:pan-y}
+  #card{position:absolute;inset:0;display:flex;flex-direction:column;padding:8px 14px 0;will-change:transform}
+  .top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .sym{font-size:24px;font-weight:700;letter-spacing:.3px}
+  .sub{font-size:13px;color:var(--muted);margin-top:2px}
+  .px{text-align:right}
+  .px .p{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+  .px .c{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+  .badges{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 6px;min-height:22px}
+  .badge{font-size:12px;padding:3px 8px;border-radius:6px;background:#222a33;color:var(--muted)}
+  .badge.bull{background:rgba(34,197,94,.15);color:#4ade80}
+  .badge.bear{background:rgba(239,68,68,.15);color:#f87171}
+  .badge.hot{background:rgba(242,201,76,.16);color:var(--ma30)}
+  .mas{display:flex;gap:12px;font-size:12.5px;font-variant-numeric:tabular-nums;margin-bottom:4px}
+  .mas span b{font-weight:600}
+  #chart{flex:1;min-height:200px}
+  .empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:var(--muted);text-align:center;padding:30px;font-size:15px;line-height:1.6}
+  footer{display:flex;align-items:center;justify-content:space-between;padding:8px 14px 10px;border-top:1px solid var(--line)}
+  footer button{border:0;background:var(--panel);color:var(--text);font-size:18px;width:52px;height:40px;border-radius:10px}
+  footer button:disabled{opacity:.3}
+  .mid{text-align:center}
+  #pos{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+  #upd{font-size:11px;color:var(--muted);margin-top:2px}
+</style>
+</head>
+<body>
+<header>
+  <div class="seg" id="seg">
+    <button data-m="crypto">加密貨幣</button>
+    <button data-m="tw">台股</button>
+  </div>
+</header>
+<div class="chips" id="chips"></div>
+<div id="banner"></div>
+<main id="main">
+  <div id="card">
+    <div class="top">
+      <div><div class="sym" id="sym">—</div><div class="sub" id="subt"></div></div>
+      <div class="px"><div class="p" id="price">—</div><div class="c" id="chg"></div></div>
+    </div>
+    <div class="badges" id="badges"></div>
+    <div class="mas">
+      <span style="color:var(--ma30)">MA30 <b id="m30">—</b></span>
+      <span style="color:var(--ma45)">MA45 <b id="m45">—</b></span>
+      <span style="color:var(--ma60)">MA60 <b id="m60">—</b></span>
+    </div>
+    <div id="chart"></div>
+  </div>
+  <div class="empty" id="empty">這個條件目前沒有符合的標的</div>
+</main>
+<footer>
+  <button id="prev" aria-label="上一個">◀</button>
+  <div class="mid"><div id="pos">0 / 0</div><div id="upd"></div></div>
+  <button id="next" aria-label="下一個">▶</button>
+</footer>
+
+<script>
+const MA_LEN = [30, 45, 60];
+const SHOW_BARS = 120;
+const FILTERS = [
+  {k:'all',   t:'全部'},
+  {k:'bull',  t:'多頭排列'},
+  {k:'cross', t:'剛突破MA30'},
+  {k:'above', t:'站上MA30'},
+  {k:'bear',  t:'空頭排列'},
+];
+// 台股：紅漲綠跌；加密貨幣：綠漲紅跌
+const COLORS = {
+  tw:     {up:'#ef4444', down:'#22c55e'},
+  crypto: {up:'#22c55e', down:'#ef4444'},
+};
+
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem('mas_'+k); return v==null ? d : JSON.parse(v);}catch(e){return d;} },
+  set(k, v){ try{ localStorage.setItem('mas_'+k, JSON.stringify(v)); }catch(e){} },
+};
+
+const state = {
+  mode: store.get('mode', 'crypto'),
+  filter: {crypto: store.get('f_crypto','all'), tw: store.get('f_tw','all')},
+  idx: {crypto: 0, tw: 0},
+  data: {crypto: null, tw: null},
+  demo: {crypto: false, tw: false},
+};
+
+/* ---------- 指標計算 ---------- */
+function sma(closes, n){
+  const out = new Array(closes.length).fill(null);
+  let s = 0;
+  for (let i = 0; i < closes.length; i++){
+    s += closes[i];
+    if (i >= n) s -= closes[i-n];
+    if (i >= n-1) out[i] = s / n;
+  }
+  return out;
+}
+function analyse(item){
+  const c = item.candles.map(x => x[4]);
+  const ma = MA_LEN.map(n => sma(c, n));
+  const L = c.length - 1;
+  const last = c[L], prev = c[L-1];
+  const [a,b,d] = ma.map(m => m[L]);
+  const ok = a!=null && b!=null && d!=null;
+  let cross = false;
+  for (let i = Math.max(1, L-2); i <= L; i++){
+    if (ma[0][i-1]!=null && c[i-1] <= ma[0][i-1] && c[i] > ma[0][i]) cross = true;
+  }
+  return {
+    ma, last, chg: prev ? (last/prev - 1) * 100 : 0,
+    m30:a, m45:b, m60:d,
+    bull: ok && last > a && a > b && b > d,
+    bear: ok && last < a && a < b && b < d,
+    above: ok && last > a,
+    cross,
+  };
+}
+
+/* ---------- 資料 ---------- */
+async function loadMode(mode){
+  if (state.data[mode]) return;
+  let json = null;
+  try{
+    const r = await fetch(`data/${mode}.json?t=${Date.now()}`, {cache:'no-store'});
+    if (!r.ok) throw new Error(r.status);
+    json = await r.json();
+  }catch(e){
+    json = makeDemo(mode);
+    state.demo[mode] = true;
+  }
+  json.items = json.items.filter(it => it.candles && it.candles.length > 61);
+  json.items.forEach(it => it.a = analyse(it));
+  state.data[mode] = json;
+}
+
+function makeDemo(mode){
+  // 示範資料：隨機走勢，僅用來測試介面
+  let seed = mode === 'tw' ? 7 : 3;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const names = mode === 'tw'
+    ? [['2330','台積電',1000],['2317','鴻海',180],['2454','聯發科',1300],['2308','台達電',400],['2382','廣達',290],['3711','日月光投控',160],['2303','聯電',48],['2891','中信金',40]]
+    : [['BTCUSDT','BTC/USDT',90000],['ETHUSDT','ETH/USDT',3200],['SOLUSDT','SOL/USDT',160],['BNBUSDT','BNB/USDT',900],['XRPUSDT','XRP/USDT',2.3],['DOGEUSDT','DOGE/USDT',0.18],['ADAUSDT','ADA/USDT',0.6],['LINKUSDT','LINK/USDT',16]];
+  const items = names.map(([s, n, p0]) => {
+    const candles = []; let p = p0 * (0.7 + rnd()*0.4);
+    const drift = (rnd() - 0.45) * 0.006;
+    const t0 = new Date(); t0.setUTCHours(0,0,0,0);
+    for (let i = 199; i >= 0; i--){
+      const d = new Date(t0 - i*864e5);
+      const o = p, ch = drift + (rnd()-0.5) * 0.05;
+      const cl = Math.max(o * (1+ch), p0*0.05);
+      const h = Math.max(o, cl) * (1 + rnd()*0.02), l = Math.min(o, cl) * (1 - rnd()*0.02);
+      candles.push([d.toISOString().slice(0,10), o, h, l, cl, 0]);
+      p = cl;
+    }
+    return {symbol:s, name:n, candles};
+  });
+  return {updated: null, items};
+}
+
+// 加密貨幣：嘗試直接從 Binance 拿最新 K 線（失敗就用排程抓好的資料）
+const liveCache = {};
+async function refreshCryptoLive(item){
+  if (state.demo.crypto) return;
+  const key = item.symbol;
+  if (liveCache[key] && Date.now() - liveCache[key] < 60e3) return;
+  try{
+    const r = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${key}&interval=1d&limit=200`);
+    if (!r.ok) return;
+    const k = await r.json();
+    item.candles = k.map(x => [new Date(x[0]).toISOString().slice(0,10), +x[1], +x[2], +x[3], +x[4], +x[7]]);
+    item.a = analyse(item);
+    item.live = true;
+    liveCache[key] = Date.now();
+    const cur = currentItem();
+    if (cur && cur.symbol === key) render(false);
+  }catch(e){}
+}
+
+/* ---------- 列表 / 篩選 ---------- */
+function list(mode = state.mode){
+  const d = state.data[mode]; if (!d) return [];
+  const f = state.filter[mode];
+  return f === 'all' ? d.items : d.items.filter(it => it.a[f]);
+}
+function currentItem(){
+  const L = list(); if (!L.length) return null;
+  state.idx[state.mode] = Math.min(state.idx[state.mode], L.length - 1);
+  return L[state.idx[state.mode]];
+}
+
+/* ---------- 圖表 ---------- */
+const chartEl = document.getElementById('chart');
+const chart = LightweightCharts.createChart(chartEl, {
+  autoSize: true,
+  layout: {background: {type:'solid', color:'transparent'}, textColor:'#8b949e', fontSize: 11},
+  grid: {vertLines: {color:'#1b2129'}, horzLines: {color:'#1b2129'}},
+  rightPriceScale: {borderColor:'#262d36', scaleMargins:{top:0.08, bottom:0.06}},
+  timeScale: {borderColor:'#262d36', rightOffset: 2},
+  crosshair: {mode: 0},
+  handleScroll: false,   // 讓左右滑動用來換標的
+  handleScale: false,
+});
+const candle = chart.addCandlestickSeries({borderVisible:false, priceLineVisible:false});
+const maSeries = [
+  chart.addLineSeries({color:'#f2c94c', lineWidth:2, priceLineVisible:false, lastValueVisible:false, crosshairMarkerVisible:false}),
+  chart.addLineSeries({color:'#2fb5f0', lineWidth:2, priceLineVisible:false, lastValueVisible:false, crosshairMarkerVisible:false}),
+  chart.addLineSeries({color:'#c77dff', lineWidth:2, priceLineVisible:false, lastValueVisible:false, crosshairMarkerVisible:false}),
+];
+
+function fmt(v){
+  if (v == null || isNaN(v)) return '—';
+  const a = Math.abs(v);
+  const dp = a >= 1000 ? 1 : a >= 100 ? 2 : a >= 1 ? 2 : a >= 0.01 ? 4 : 6;
+  return v.toLocaleString('en-US', {minimumFractionDigits: dp, maximumFractionDigits: dp});
+}
+
+/* ---------- 畫面 ---------- */
+const $ = id => document.getElementById(id);
+
+function renderChips(){
+  const d = state.data[state.mode];
+  $('chips').innerHTML = FILTERS.map(f => {
+    const n = d ? (f.k === 'all' ? d.items.length : d.items.filter(it => it.a[f.k]).length) : '';
+    return `<button class="chip ${state.filter[state.mode]===f.k?'on':''}" data-f="${f.k}">${f.t}<span class="n">${n}</span></button>`;
+  }).join('');
+}
+
+function render(fitChart = true){
+  document.querySelectorAll('#seg button').forEach(b => b.classList.toggle('on', b.dataset.m === state.mode));
+  renderChips();
+  const d = state.data[state.mode];
+  const L = list();
+  const it = currentItem();
+
+  $('banner').style.display = state.demo[state.mode] ? 'block' : 'none';
+  $('banner').textContent = '目前顯示的是示範資料（隨機走勢，不是真實行情）。照說明部署到 GitHub 後就會換成真實資料。';
+
+  $('upd').textContent = d && d.updated ? '資料更新：' + new Date(d.updated).toLocaleString('zh-TW', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false}) : '';
+  $('pos').textContent = L.length ? `${state.idx[state.mode]+1} / ${L.length}` : '0 / 0';
+  $('prev').disabled = !L.length || state.idx[state.mode] === 0;
+  $('next').disabled = !L.length || state.idx[state.mode] >= L.length - 1;
+
+  $('card').style.visibility = it ? 'visible' : 'hidden';
+  $('empty').style.display = it ? 'none' : 'flex';
+  if (!it) return;
+
+  const a = it.a, col = COLORS[state.mode];
+  $('sym').textContent = state.mode === 'tw' ? it.name : it.name.replace('/USDT','');
+  $('subt').textContent = state.mode === 'tw' ? it.symbol.replace(/\.TWO?$/,'') : it.name + (it.live ? ' · 即時' : '');
+  $('price').textContent = fmt(a.last);
+  $('chg').textContent = (a.chg >= 0 ? '+' : '') + a.chg.toFixed(2) + '%';
+  $('chg').style.color = a.chg >= 0 ? col.up : col.down;
+  $('m30').textContent = fmt(a.m30);
+  $('m45').textContent = fmt(a.m45);
+  $('m60').textContent = fmt(a.m60);
+
+  const b = [];
+  if (a.bull) b.push('<span class="badge bull">多頭排列</span>');
+  if (a.bear) b.push('<span class="badge bear">空頭排列</span>');
+  if (a.cross) b.push('<span class="badge hot">剛突破MA30</span>');
+  else if (a.above) b.push('<span class="badge">站上MA30</span>');
+  else b.push('<span class="badge">跌破MA30</span>');
+  $('badges').innerHTML = b.join('');
+
+  candle.applyOptions({upColor: col.up, downColor: col.down, wickUpColor: col.up, wickDownColor: col.down});
+  candle.setData(it.candles.map(x => ({time: x[0], open: x[1], high: x[2], low: x[3], close: x[4]})));
+  a.ma.forEach((m, i) => maSeries[i].setData(
+    it.candles.map((x, j) => m[j] == null ? null : {time: x[0], value: m[j]}).filter(Boolean)
+  ));
+  if (fitChart){
+    const n = it.candles.length;
+    chart.timeScale().setVisibleLogicalRange({from: n - SHOW_BARS, to: n + 1});
+  }
+  if (state.mode === 'crypto') refreshCryptoLive(it);
+}
+
+/* ---------- 切換 ---------- */
+const card = $('card');
+let animating = false;
+function go(dir){
+  const L = list(); const i = state.idx[state.mode] + dir;
+  if (animating || i < 0 || i >= L.length){ snapBack(); return; }
+  animating = true;
+  const w = window.innerWidth;
+  card.style.transition = 'transform .18s ease-in';
+  card.style.transform = `translateX(${-dir * w}px)`;
+  setTimeout(() => {
+    state.idx[state.mode] = i;
+    render();
+    card.style.transition = 'none';
+    card.style.transform = `translateX(${dir * w}px)`;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      card.style.transition = 'transform .2s ease-out';
+      card.style.transform = 'translateX(0)';
+      setTimeout(() => animating = false, 200);
+    }));
+  }, 180);
+}
+function snapBack(){
+  card.style.transition = 'transform .2s ease-out';
+  card.style.transform = 'translateX(0)';
+}
+
+// 滑動手勢
+let sx = 0, sy = 0, dx = 0, tracking = false, horiz = null;
+const main = $('main');
+main.addEventListener('touchstart', e => {
+  if (animating) return;
+  const t = e.touches[0]; sx = t.clientX; sy = t.clientY; dx = 0; tracking = true; horiz = null;
+  card.style.transition = 'none';
+}, {passive: true});
+main.addEventListener('touchmove', e => {
+  if (!tracking) return;
+  const t = e.touches[0]; dx = t.clientX - sx; const dy = t.clientY - sy;
+  if (horiz === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) horiz = Math.abs(dx) > Math.abs(dy);
+  if (horiz){
+    e.preventDefault();
+    const L = list(), i = state.idx[state.mode];
+    const edge = (dx > 0 && i === 0) || (dx < 0 && i >= L.length - 1);
+    card.style.transform = `translateX(${edge ? dx * 0.3 : dx}px)`;
+  }
+}, {passive: false});
+main.addEventListener('touchend', () => {
+  if (!tracking) return; tracking = false;
+  if (horiz && Math.abs(dx) > 60) go(dx < 0 ? 1 : -1); else snapBack();
+});
+main.addEventListener('touchcancel', () => { tracking = false; snapBack(); });
+
+$('prev').onclick = () => go(-1);
+$('next').onclick = () => go(1);
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') go(1);
+  if (e.key === 'ArrowLeft') go(-1);
+});
+
+$('seg').addEventListener('click', async e => {
+  const m = e.target.dataset && e.target.dataset.m; if (!m || m === state.mode) return;
+  state.mode = m; store.set('mode', m);
+  await loadMode(m); render();
+});
+$('chips').addEventListener('click', e => {
+  const b = e.target.closest('.chip'); if (!b) return;
+  state.filter[state.mode] = b.dataset.f; store.set('f_' + state.mode, b.dataset.f);
+  state.idx[state.mode] = 0; render();
+});
+
+(async () => {
+  if (!['crypto','tw'].includes(state.mode)) state.mode = 'crypto';
+  await loadMode(state.mode);
+  render();
+  loadMode(state.mode === 'crypto' ? 'tw' : 'crypto');
+})();
+</script>
+</body>
+</html>
